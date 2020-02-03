@@ -8,6 +8,102 @@
 #include <math.h>
 #include <time.h>
 #include <stdint.h>
+#include "sys/time.h"
+#define _BSD_SOURCE
+#include <pthread.h>
+
+#define NUM_THREADS 10
+#define NUM_THREADS2 1024
+pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
+
+struct thread_args{
+    int start;
+    int end;
+};
+
+struct thread_args2{
+    int start;
+    int end;
+    int rx;
+};
+
+int boundry;
+int outer_boundry;
+float *point_x; // Point x position
+float *point_y; // Point y position
+float *point_z; // Point z position
+float tx_x = 0; // Transmit transducer x position
+float tx_y = 0; // Transmit transducer y position
+float tx_z = -0.001; // Transmit transducer z position
+float *dist_tx; // Transmit distance (ie first leg only)
+int it_rx; // Iterator for recieve transducer
+float *image;  // Pointer to full image (accumulated so far)
+const float idx_const = 0.000009625; // Speed of sound and sampling rate, converts dist to index
+const int filter_delay = 140; // Constant added to index to account filter delay (off by 1 from MATLAB)
+int data_len = 12308; // Number for pre-processed data values per channel
+float *rx_x; // Receive transducer x position
+float *rx_y; // Receive transducer y position
+float rx_z = 0; // Receive transducer z position
+float *rx_data; // Pointer to pre-processed receive channel data
+
+void *cal_tx_data(void *args){
+	struct thread_args *range = (struct thread_args *) args;
+	float x_comp; // Itermediate value for dist calc
+	float y_comp; // Itermediate value for dist calc
+	float z_comp; // Itermediate value for dist calc
+	int point = 0;
+	for(point = range->start; point < range->end; point++){
+
+		x_comp = tx_x - point_x[point];
+		x_comp = x_comp * x_comp;
+		y_comp = tx_y - point_y[point];
+		y_comp = y_comp * y_comp;
+		z_comp = tx_z - point_z[point];
+		z_comp = z_comp * z_comp;
+		dist_tx[point] = (float)sqrt(x_comp + y_comp + z_comp);
+	}
+	pthread_exit(0);
+}
+
+void *cal_rx_data(void *args){
+
+		float *image_pos = image; // Reset image pointer back to beginning
+		int offset = 0;
+		int point = 0; // Reset 
+		int ppoint;
+		int bboundry = 64*64*1560;
+		struct thread_args2 *range = (struct thread_args2 *) args;
+		float x_comp; // Itermediate value for dist calc
+		float y_comp; // Itermediate value for dist calc
+		float z_comp; // Itermediate value for dist calc
+		float dist; // Full distance
+		int index; // Index into transducer data
+		int rx=0;
+		// Iterate over entire image space
+		for (point = range->start; point < range->end; point++ ){
+			ppoint = point % (bboundry) ;
+			rx = range->rx +  (point / (bboundry));
+			offset = rx *data_len;
+			
+			x_comp = rx_x[rx] - point_x[ppoint];
+			x_comp = x_comp * x_comp;
+			y_comp = rx_y[rx] - point_y[ppoint];
+			y_comp = y_comp * y_comp;
+			z_comp = rx_z - point_z[ppoint];
+			z_comp = z_comp * z_comp;
+
+			long thread_private_tmp = 0;
+			dist = dist_tx[ppoint] + (float)sqrt(x_comp + y_comp + z_comp);
+			index = (int)(dist/idx_const + filter_delay + 0.5);
+			//thread_private_tmp += rx_data[index+offset];
+            //pthread_mutex_lock(&lock);
+            image_pos[ppoint]  += rx_data[index+offset];
+            //pthread_mutex_unlock(&lock);
+
+		}
+	pthread_exit(0);
+}
+
 
 int main (int argc, char **argv) {
 
@@ -17,34 +113,21 @@ int main (int argc, char **argv) {
 	int trans_x = 32; // Transducers in x dim
 	int trans_y = 32; // Transducers in y dim
 	
-	float *rx_x; // Receive transducer x position
-	float *rx_y; // Receive transducer y position
-	float rx_z = 0; // Receive transducer z position
-
-	int data_len = 12308; // Number for pre-processed data values per channel
 	int offset = 0; // Offset into rx_data
-	float *rx_data; // Pointer to pre-processed receive channel data
 
-	float tx_x = 0; // Transmit transducer x position
-	float tx_y = 0; // Transmit transducer y position
-	float tx_z = -0.001; // Transmit transducer z position
+
 
 	/* Variables for image space points */
 	int point; // Index into image space
 
-	float *point_x; // Point x position
-	float *point_y; // Point y position
-	float *point_z; // Point z position
 
 	int pts_r = 1560; // Radial points along scanline
 	int sls_t = size; // Number of scanlines in theta
 	int sls_p = size; // Number of scanlines in phi
 
 	float *image_pos; // Pointer to current position in image
-	float *image;  // Pointer to full image (accumulated so far)
 
 	/* Iterators */
-	int it_rx; // Iterator for recieve transducer
 	int it_r; // Iterator for r
 	int it_t; // Iterator for theta
 	int it_p; // Iterator for phi
@@ -54,11 +137,7 @@ int main (int argc, char **argv) {
 	float y_comp; // Itermediate value for dist calc
 	float z_comp; // Itermediate value for dist calc
 
-	float *dist_tx; // Transmit distance (ie first leg only)
-	float dist; // Full distance
-	const float idx_const = 0.000009625; // Speed of sound and sampling rate, converts dist to index
-	const int filter_delay = 140; // Constant added to index to account filter delay (off by 1 from MATLAB)
-	int index; // Index into transducer data
+	//float *dist_tx; // Transmit distance (ie first leg only)
 
         FILE* input;
         FILE* output;
@@ -94,9 +173,10 @@ int main (int argc, char **argv) {
 
 	char buff[128];
         #ifdef __MIC__
-	  sprintf(buff, "/beamforming_input_%s.bin", argv[1]);
+	  sprintf(buff, "./beamforming_input_%s.bin", argv[1]);
         #else // !__MIC__
-	  sprintf(buff, "/n/typhon/data1/home/eecs570/beamforming_input_%s.bin", argv[1]);
+	  sprintf(buff, "./beamforming_input_%s.bin", argv[1]);
+	  //sprintf(buff, "/n/typhon/data1/home/eecs570/beamforming_input_%s.bin", argv[1]);
         #endif
 
         input = fopen(buff,"rb");
@@ -127,50 +207,64 @@ int main (int argc, char **argv) {
  
 	/* --------------------------- COMPUTATION ------------------------------ */
 	/* First compute transmit distance */
-	point = 0;
-	for (it_t = 0; it_t < sls_t; it_t++) {
+	boundry 	= sls_t*sls_p*pts_r;
 
-		for (it_p = 0; it_p < sls_p; it_p++) {
-			for (it_r = 0; it_r < pts_r; it_r++) {
+	printf("boundry is %d\n",boundry);
+	printf("outer_boundry is %d\n",outer_boundry);
+	pthread_t 		child_threads1[NUM_THREADS];
+    	struct thread_args 	work_ranges1[NUM_THREADS];
+    	long int 			current_start, range;
+    	long int range2;
+	int i,j,k,l,m,n;
+    	current_start = 0;
+    	range = boundry / NUM_THREADS;
+    	printf("rang is %d\n",range);
+    	for(i = 0; i < NUM_THREADS; i++) {
+    	    work_ranges1[i].start = current_start;
+    	    work_ranges1[i].end = current_start + range;
+    	    current_start += range;
+    	    printf("start is %d\n",work_ranges1[i].start);
+    	    printf("end is %d\n",work_ranges1[i].end);
+    	}
+    	printf("---------------------------");
+    	work_ranges1[NUM_THREADS-1].end = boundry;
 
-				x_comp = tx_x - point_x[point];
-				x_comp = x_comp * x_comp;
-				y_comp = tx_y - point_y[point];
-				y_comp = y_comp * y_comp;
-				z_comp = tx_z - point_z[point];
-				z_comp = z_comp * z_comp;
-
-				dist_tx[point++] = (float)sqrt(x_comp + y_comp + z_comp);
-			}
-		}
-	}
+	for(i = 0; i < NUM_THREADS; i++) {
+        	pthread_create(&child_threads1[i], NULL, cal_tx_data, &work_ranges1[i]);
+    	}
+    	for(i = 0; i < NUM_THREADS; i++) {
+        	pthread_join(child_threads1[i], NULL);
+    	}
 
 	/* Now compute reflected distance, find index values, add to image */
-	for (it_rx = 0; it_rx < trans_x * trans_y; it_rx++) {
+		pthread_t 		child_threads2[NUM_THREADS2];
+    	struct thread_args2 	work_ranges2[NUM_THREADS2];
+    	current_start = 0;
+    	range2 =  boundry / NUM_THREADS2;
+    	range2 =  range2 * trans_x*trans_y;
+    	int rx=0;
+    	printf("rang is %d\n",range2);
+    	for(j = 0; j < NUM_THREADS2; j++) {
+    	    work_ranges2[j].start = current_start;
+    	    work_ranges2[j].end = current_start + range2;
+    	    work_ranges2[j].rx = rx; 
+			rx += 1 ;
+    	    current_start =	work_ranges2[j].end % boundry;
+    	    printf("start is %d\n",work_ranges2[j].start);
+    	    printf("end is %d\n",work_ranges2[j].end);
+    	    printf("rx is %d\n",work_ranges2[j].rx);
+    	}
 
-		image_pos = image; // Reset image pointer back to beginning
-		point = 0; // Reset 
+    	work_ranges2[NUM_THREADS2-1].end = outer_boundry;
+ 		printf("end is %d\n",outer_boundry);
+		for(int i = 0; i < NUM_THREADS2; i++) {
+        		pthread_create(&child_threads2[i], NULL, cal_rx_data, &work_ranges2[i]);
+    		}
+    		for(int i = 0; i < NUM_THREADS2; i++) {
+        		pthread_join(child_threads2[i], NULL);
+    		}
 
-		// Iterate over entire image space
-		for (it_t = 0; it_t < sls_t; it_t++) {
-			for (it_p = 0; it_p < sls_p; it_p++) {
-				for (it_r = 0; it_r < pts_r; it_r++) {
-
-					x_comp = rx_x[it_rx] - point_x[point];
-					x_comp = x_comp * x_comp;
-					y_comp = rx_y[it_rx] - point_y[point];
-					y_comp = y_comp * y_comp;
-					z_comp = rx_z - point_z[point];
-					z_comp = z_comp * z_comp;
-
-					dist = dist_tx[point++] + (float)sqrt(x_comp + y_comp + z_comp);
-					index = (int)(dist/idx_const + filter_delay + 0.5);
-					*image_pos++ += rx_data[index+offset];
-				}
-			}
-		}
-		offset += data_len;
-	}
+	
 
 	/* --------------------------------------------------------------------- */
 
