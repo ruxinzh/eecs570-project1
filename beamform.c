@@ -9,7 +9,6 @@
 #include <time.h>
 #include <stdint.h>
 #include "sys/time.h"
-#define _BSD_SOURCE
 #include <pthread.h>
 
 #define NUM_THREADS 10
@@ -81,10 +80,17 @@ void *cal_rx_data(void *args){
 		int rx=0;
 		// Iterate over entire image space
 		for (point = range->start; point < range->end; point++ ){
-			ppoint = point % (bboundry) ;
-			rx = range->rx +  (point / (bboundry));
-			offset = rx *data_len;
+			if((point+range->rx)>=6389760){
+				ppoint = (point+range->rx)-6389760; 
+			}
+			else {
+				ppoint = point  + range->rx;
+								
+			}
 			
+			rx = range->rx;
+			offset = rx *data_len;
+
 			x_comp = rx_x[rx] - point_x[ppoint];
 			x_comp = x_comp * x_comp;
 			y_comp = rx_y[rx] - point_y[ppoint];
@@ -95,10 +101,7 @@ void *cal_rx_data(void *args){
 			long thread_private_tmp = 0;
 			dist = dist_tx[ppoint] + (float)sqrt(x_comp + y_comp + z_comp);
 			index = (int)(dist/idx_const + filter_delay + 0.5);
-			//thread_private_tmp += rx_data[index+offset];
-            //pthread_mutex_lock(&lock);
             image_pos[ppoint]  += rx_data[index+offset];
-            //pthread_mutex_unlock(&lock);
 
 		}
 	pthread_exit(0);
@@ -209,8 +212,6 @@ int main (int argc, char **argv) {
 	/* First compute transmit distance */
 	boundry 	= sls_t*sls_p*pts_r;
 
-	printf("boundry is %d\n",boundry);
-	printf("outer_boundry is %d\n",outer_boundry);
 	pthread_t 		child_threads1[NUM_THREADS];
     	struct thread_args 	work_ranges1[NUM_THREADS];
     	long int 			current_start, range;
@@ -218,15 +219,11 @@ int main (int argc, char **argv) {
 	int i,j,k,l,m,n;
     	current_start = 0;
     	range = boundry / NUM_THREADS;
-    	printf("rang is %d\n",range);
     	for(i = 0; i < NUM_THREADS; i++) {
     	    work_ranges1[i].start = current_start;
     	    work_ranges1[i].end = current_start + range;
     	    current_start += range;
-    	    printf("start is %d\n",work_ranges1[i].start);
-    	    printf("end is %d\n",work_ranges1[i].end);
     	}
-    	printf("---------------------------");
     	work_ranges1[NUM_THREADS-1].end = boundry;
 
 	for(i = 0; i < NUM_THREADS; i++) {
@@ -243,24 +240,24 @@ int main (int argc, char **argv) {
     	range2 =  boundry / NUM_THREADS2;
     	range2 =  range2 * trans_x*trans_y;
     	int rx=0;
-    	printf("rang is %d\n",range2);
-    	for(j = 0; j < NUM_THREADS2; j++) {
+       	for(j = 0; j < NUM_THREADS2; j++) {
     	    work_ranges2[j].start = current_start;
     	    work_ranges2[j].end = current_start + range2;
     	    work_ranges2[j].rx = rx; 
 			rx += 1 ;
     	    current_start =	work_ranges2[j].end % boundry;
+    	    printf("start is %d\n",work_ranges2[j].rx);
     	    printf("start is %d\n",work_ranges2[j].start);
-    	    printf("end is %d\n",work_ranges2[j].end);
-    	    printf("rx is %d\n",work_ranges2[j].rx);
+    	    printf("start is %d\n",work_ranges2[j].end);
+    	    printf("===============================\n");
     	}
 
-    	work_ranges2[NUM_THREADS2-1].end = outer_boundry;
- 		printf("end is %d\n",outer_boundry);
-		for(int i = 0; i < NUM_THREADS2; i++) {
+    	work_ranges2[NUM_THREADS2-1].end = range2;
+
+		for(i = 0; i < NUM_THREADS2; i++) {
         		pthread_create(&child_threads2[i], NULL, cal_rx_data, &work_ranges2[i]);
     		}
-    		for(int i = 0; i < NUM_THREADS2; i++) {
+    		for(i = 0; i < NUM_THREADS2; i++) {
         		pthread_join(child_threads2[i], NULL);
     		}
 
