@@ -228,10 +228,10 @@ int main (int argc, char **argv) {
     	work_ranges2[NUM_THREADS-1].end = boundry;
 
 	for (it_rx = 0; it_rx < trans_x * trans_y; it_rx++) {
-		for(int i = 0; i < NUM_THREADS; i++) {
+		for(i = 0; i < NUM_THREADS; i++) {
         		pthread_create(&child_threads2[i], NULL, cal_rx_data, &work_ranges2[i]);
     		}
-    		for(int i = 0; i < NUM_THREADS; i++) {
+    		for(i = 0; i < NUM_THREADS; i++) {
         		pthread_join(child_threads2[i], NULL);
     		}
 
