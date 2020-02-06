@@ -11,8 +11,8 @@
 #include "sys/time.h"
 #include <pthread.h>
 
-#define NUM_THREADS 10
-#define NUM_THREADS2 1024
+#define NUM_THREADS 244
+//#define NUM_THREADS2 32
 pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
 
 struct thread_args{
@@ -20,11 +20,10 @@ struct thread_args{
     int end;
 };
 
-struct thread_args2{
-    int start;
-    int end;
-    int rx;
-};
+//struct thread_args2{
+//    int start;
+//    int end;
+//};
 
 int boundry;
 int outer_boundry;
@@ -45,7 +44,10 @@ float *rx_y; // Receive transducer y position
 float rx_z = 0; // Receive transducer z position
 float *rx_data; // Pointer to pre-processed receive channel data
 
-void *cal_tx_data(void *args){
+int trans_x = 32; // Transducers in x dim
+int trans_y = 32; // Transducers in y dim
+
+void *cal_1(void *args){
 	struct thread_args *range = (struct thread_args *) args;
 	float x_comp; // Itermediate value for dist calc
 	float y_comp; // Itermediate value for dist calc
@@ -64,45 +66,44 @@ void *cal_tx_data(void *args){
 	pthread_exit(0);
 }
 
-void *cal_rx_data(void *args){
+void *cal_2(void *args){
 
 		float *image_pos = image; // Reset image pointer back to beginning
 		int offset = 0;
-		int point = 0; // Reset 
-		int ppoint;
-		int bboundry = 64*64*1560;
-		struct thread_args2 *range = (struct thread_args2 *) args;
+		int point = 0; // Reset    		
+		//int bboundry = 64*64*1560;
+		struct thread_args *range = (struct thread_args *) args;
 		float x_comp; // Itermediate value for dist calc
 		float y_comp; // Itermediate value for dist calc
 		float z_comp; // Itermediate value for dist calc
 		float dist; // Full distance
 		int index; // Index into transducer data
-		int rx=0;
+		int it;
+		
+		//float *image_pos = image; // Reset image pointer back to beginning
 		// Iterate over entire image space
-		for (point = range->start; point < range->end; point++ ){
-			if((point+range->rx)>=6389760){
-				ppoint = (point+range->rx)-6389760; 
-			}
-			else {
-				ppoint = point  + range->rx;
-								
-			}
-			
-			rx = range->rx;
-			offset = rx *data_len;
+		// rx
+		// start
+		// end
+		for (it=0;it <trans_x*trans_y ;it++){
 
-			x_comp = rx_x[rx] - point_x[ppoint];
+		//float *image_pos = image; // Reset image pointer back to beginning
+		//point = 0;	
+		for (point = range->start; point < range->end; point++ ){	
+
+			x_comp = rx_x[it] - point_x[point];
 			x_comp = x_comp * x_comp;
-			y_comp = rx_y[rx] - point_y[ppoint];
+			y_comp = rx_y[it] - point_y[point];
 			y_comp = y_comp * y_comp;
-			z_comp = rx_z - point_z[ppoint];
+			z_comp = rx_z - point_z[point];
 			z_comp = z_comp * z_comp;
 
-			long thread_private_tmp = 0;
-			dist = dist_tx[ppoint] + (float)sqrt(x_comp + y_comp + z_comp);
+			dist = dist_tx[point] + (float)sqrt(x_comp + y_comp + z_comp);
 			index = (int)(dist/idx_const + filter_delay + 0.5);
-            image_pos[ppoint]  += rx_data[index+offset];
+            		image_pos[point]  += rx_data[index+offset];
 
+		}
+		offset += data_len;
 		}
 	pthread_exit(0);
 }
@@ -113,14 +114,12 @@ int main (int argc, char **argv) {
 	int size = atoi(argv[1]);
 
 	/* Variables for transducer geometry */
-	int trans_x = 32; // Transducers in x dim
-	int trans_y = 32; // Transducers in y dim
 	
 	int offset = 0; // Offset into rx_data
 
 
 
-	/* Variables for image space points */
+
 	int point; // Index into image space
 
 
@@ -176,9 +175,9 @@ int main (int argc, char **argv) {
 
 	char buff[128];
         #ifdef __MIC__
-	  sprintf(buff, "./beamforming_input_%s.bin", argv[1]);
+	  sprintf(buff, "/beamforming_input_%s.bin", argv[1]);
         #else // !__MIC__
-	  sprintf(buff, "./beamforming_input_%s.bin", argv[1]);
+	  sprintf(buff, "/n/typhon/data1/home/eecs570/beamforming_input_%s.bin", argv[1]);
 	  //sprintf(buff, "/n/typhon/data1/home/eecs570/beamforming_input_%s.bin", argv[1]);
         #endif
 
@@ -212,55 +211,57 @@ int main (int argc, char **argv) {
 	/* First compute transmit distance */
 	boundry 	= sls_t*sls_p*pts_r;
 
-	pthread_t 		child_threads1[NUM_THREADS];
-    	struct thread_args 	work_ranges1[NUM_THREADS];
+	pthread_t 		child_threads[NUM_THREADS];
+    	struct thread_args 	work_ranges[NUM_THREADS];
     	long int 			current_start, range;
-    	long int range2;
+    	//int range2;
 	int i,j,k,l,m,n;
     	current_start = 0;
     	range = boundry / NUM_THREADS;
     	for(i = 0; i < NUM_THREADS; i++) {
-    	    work_ranges1[i].start = current_start;
-    	    work_ranges1[i].end = current_start + range;
+    	    work_ranges[i].start = current_start;
+    	    work_ranges[i].end = current_start + range;
     	    current_start += range;
     	}
-    	work_ranges1[NUM_THREADS-1].end = boundry;
+    	work_ranges[NUM_THREADS-1].end = boundry;
 
 	for(i = 0; i < NUM_THREADS; i++) {
-        	pthread_create(&child_threads1[i], NULL, cal_tx_data, &work_ranges1[i]);
+        	pthread_create(&child_threads[i], NULL, cal_1, &work_ranges[i]);
     	}
     	for(i = 0; i < NUM_THREADS; i++) {
-        	pthread_join(child_threads1[i], NULL);
+        	pthread_join(child_threads[i], NULL);
     	}
 
 	/* Now compute reflected distance, find index values, add to image */
-		pthread_t 		child_threads2[NUM_THREADS2];
-    	struct thread_args2 	work_ranges2[NUM_THREADS2];
-    	current_start = 0;
-    	range2 =  boundry / NUM_THREADS2;
-    	range2 =  range2 * trans_x*trans_y;
-    	int rx=0;
-       	for(j = 0; j < NUM_THREADS2; j++) {
-    	    work_ranges2[j].start = current_start;
-    	    work_ranges2[j].end = current_start + range2;
-    	    work_ranges2[j].rx = rx; 
-			rx += 1 ;
-    	    current_start =	work_ranges2[j].end % boundry;
-    	    printf("start is %d\n",work_ranges2[j].rx);
-    	    printf("start is %d\n",work_ranges2[j].start);
-    	    printf("start is %d\n",work_ranges2[j].end);
-    	    printf("===============================\n");
-    	}
+//		pthread_t 		child_threads2[NUM_THREADS2];
+ //   	struct thread_args2 	work_ranges2[NUM_THREADS2];
+//    	current_start = 0;
+//    	range2 =  boundry / NUM_THREADS2;
+    	//int rx=0;
 
-    	work_ranges2[NUM_THREADS2-1].end = range2;
-
-		for(i = 0; i < NUM_THREADS2; i++) {
-        		pthread_create(&child_threads2[i], NULL, cal_rx_data, &work_ranges2[i]);
+//       	for(j = 0; j < NUM_THREADS2; j++) {
+//    	    work_ranges2[j].start = current_start;
+//    	    work_ranges2[j].end = current_start + range2; 
+	//	rx += 1 ;
+ //   	    current_start += range2;
+	//printf("start is %d\n",work_ranges2[j].start);
+	//printf("end is %d\n",work_ranges2[j].end);
+	//printf("thread is %d\n",rx);
+    	  
+//	}
+//    	work_ranges2[NUM_THREADS2-1].end = boundry;
+//	for(it_rx = 0;it_rx<trans_x*trans_y;it_rx++){
+		for(i = 0; i < NUM_THREADS; i++) {
+        		//error = pthread_create(&child_threads2[i], NULL, cal_rx_data, &work_ranges2[i]);
+			//if (error != 0) {printf("error");}
+			pthread_create(&child_threads[i], NULL, cal_2, &work_ranges[i]);
     		}
-    		for(i = 0; i < NUM_THREADS2; i++) {
-        		pthread_join(child_threads2[i], NULL);
+    		for(i = 0; i < NUM_THREADS; i++) {
+			//error = pthread_join(child_threads2[i], NULL);
+			//if (error != 0) {printf("error");}
+        		pthread_join(child_threads[i], NULL);
     		}
-
+//}
 	
 
 	/* --------------------------------------------------------------------- */
